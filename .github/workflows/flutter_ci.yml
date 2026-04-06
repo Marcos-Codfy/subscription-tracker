@@ -1,0 +1,191 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# GitHub Actions — Esteira de CI/CD do Subscription Tracker
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# O QUE É GITHUB ACTIONS?
+# É a ferramenta de CI/CD (Integração Contínua / Entrega Contínua) do GitHub.
+# CI = toda vez que você faz um push/PR, o GitHub executa testes automaticamente.
+# CD = se os testes passarem, pode publicar o app automaticamente.
+#
+# O QUE É CI/CD?
+# - CI (Continuous Integration): integrar código frequentemente e testar sempre.
+# - CD (Continuous Delivery): entregar software de forma contínua e automatizada.
+#
+# FLUXO DESTA ESTEIRA:
+# 1. Você faz git push
+# 2. O GitHub detecta e inicia esta esteira automaticamente
+# 3. Instala o Flutter no servidor do GitHub
+# 4. Instala as dependências do projeto
+# 5. Analisa o código (lint)
+# 6. Roda todos os testes (unit + BDD)
+# 7. Gera o relatório de cobertura
+# 8. Verifica se a cobertura está >= 75%
+# 9. Publica o relatório no GitHub Pages (opcional)
+#
+# ── Quando esta esteira é executada ──────────────────────────────────────────
+on:
+  # Executa em qualquer push para as branches principais
+  push:
+    branches: [main, master, develop]
+  # Executa em Pull Requests — antes de fazer merge
+  pull_request:
+    branches: [main, master]
+
+# Nome da esteira — aparece na aba "Actions" do GitHub
+name: 🧪 Flutter CI — Tests & Coverage
+
+# ── Jobs (tarefas) da esteira ─────────────────────────────────────────────────
+# Cada job roda em paralelo (ou em sequência se houver dependência).
+# Aqui temos um único job com vários steps.
+jobs:
+  # ── Job Principal: Testes e Cobertura ────────────────────────────────────────
+  test_and_coverage:
+    # Nome amigável exibido na interface do GitHub
+    name: Run Tests & Validate Coverage
+
+    # Sistema operacional do servidor onde o job vai rodar.
+    # ubuntu-latest é o mais rápido e barato para Flutter.
+    runs-on: ubuntu-latest
+
+    # ── Steps (passos) do job ──────────────────────────────────────────────────
+    steps:
+      # ── Step 1: Checkout do código ──────────────────────────────────────────
+      # Baixa o código do repositório para o servidor do GitHub.
+      # Sem isso, o servidor não tem os arquivos do seu projeto.
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Step 2: Instalar o Flutter ──────────────────────────────────────────
+      # Usa uma action da comunidade que instala o Flutter no servidor.
+      # Especificamos o canal 'stable' para usar a versão estável mais recente.
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'       # Usa a versão 3.x mais recente
+          channel: 'stable'             # Canal estável (não beta/dev)
+          cache: true                   # Cacheia o Flutter para acelerar builds futuros
+
+      # ── Step 3: Verificar instalação ────────────────────────────────────────
+      # Confirma que o Flutter foi instalado corretamente.
+      # Útil para debug se algo der errado.
+      - name: 🔍 Flutter version info
+        run: flutter --version
+
+      # ── Step 4: Instalar dependências ───────────────────────────────────────
+      # Equivalente ao "npm install" do Node.js.
+      # Baixa todos os pacotes listados no pubspec.yaml.
+      - name: 📦 Install dependencies
+        run: flutter pub get
+
+      # ── Step 5: Análise estática do código (Lint) ───────────────────────────
+      # O Dart tem um analisador estático embutido que verifica:
+      # - Erros de tipo
+      # - Código morto (variáveis não usadas)
+      # - Problemas de estilo
+      # - Más práticas
+      # "--fatal-infos" faz a esteira falhar se houver avisos informativos
+      - name: 🔬 Analyze code (lint)
+        run: flutter analyze --fatal-infos
+
+      # ── Step 6: Verificar formatação ────────────────────────────────────────
+      # Garante que todo o código segue o estilo padrão do Dart.
+      # "dart format --output=none --set-exit-if-changed ." falha se tiver
+      # código não formatado, forçando o desenvolvedor a formatar antes de commitar.
+      - name: 🎨 Check code formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      # ── Step 7: Rodar testes com cobertura ──────────────────────────────────
+      # --coverage: gera o arquivo coverage/lcov.info com os dados de cobertura
+      # O lcov.info é um formato padrão da indústria para relatórios de cobertura.
+      - name: 🧪 Run all tests with coverage
+        run: flutter test --coverage
+
+      # ── Step 8: Instalar lcov (ferramenta de relatório de cobertura) ─────────
+      # lcov é uma ferramenta open-source para processar arquivos lcov.info.
+      # Usamos para gerar relatórios HTML e verificar a porcentagem de cobertura.
+      - name: 🛠️ Install lcov
+        run: sudo apt-get install -y lcov
+
+      # ── Step 9: Filtrar arquivos gerados da cobertura ────────────────────────
+      # Remove arquivos que não devem ser contados na cobertura:
+      # - Arquivos gerados (*.g.dart)
+      # - Arquivos de mock para testes
+      # - O próprio main.dart (muito difícil de testar em CI)
+      - name: 🧹 Filter generated files from coverage
+        run: |
+          lcov --remove coverage/lcov.info \
+            'lib/main.dart' \
+            '*.g.dart' \
+            '*/generated/*' \
+            --output-file coverage/lcov_filtered.info \
+            --ignore-errors unused
+
+      # ── Step 10: Gerar relatório HTML de cobertura ───────────────────────────
+      # Converte o lcov.info em uma página HTML navegável.
+      # Fica disponível como artefato para download após o job.
+      - name: 📊 Generate HTML coverage report
+        run: genhtml coverage/lcov_filtered.info --output-directory coverage/html
+
+      # ── Step 11: Verificar threshold de cobertura ≥ 75% ─────────────────────
+      # Este step FALHA a esteira se a cobertura cair abaixo de 75%.
+      # É a validação mais importante para a disciplina!
+      #
+      # Como funciona:
+      # 1. lcov --summary imprime as métricas de cobertura
+      # 2. grep captura a linha de "lines"
+      # 3. awk extrai o número (ex: "82.5%")
+      # 4. python compara com 75 e falha se for menor
+      - name: ✅ Validate coverage threshold (≥75%)
+        run: |
+          # Extrai o percentual de linhas cobertas
+          COVERAGE=$(lcov --summary coverage/lcov_filtered.info 2>&1 \
+            | grep "lines" \
+            | grep -oP '\d+\.\d+(?=%)' \
+            | head -1)
+
+          echo "📊 Coverage atual: ${COVERAGE}%"
+          echo "📋 Threshold mínimo: 75%"
+
+          # Compara com Python para suporte a decimais
+          python3 -c "
+          coverage = float('${COVERAGE}')
+          threshold = 75.0
+          print(f'Cobertura: {coverage}%')
+          if coverage < threshold:
+              print(f'❌ FALHOU: {coverage}% < {threshold}%')
+              exit(1)
+          else:
+              print(f'✅ PASSOU: {coverage}% >= {threshold}%')
+          "
+
+      # ── Step 12: Salvar relatório como artefato ──────────────────────────────
+      # Artefatos ficam disponíveis para download na aba Actions do GitHub.
+      # Você pode baixar e abrir o HTML localmente para ver a cobertura visual.
+      - name: 📁 Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        # "if: always()" garante que o artefato é salvo MESMO se os testes falharam
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/html/
+          retention-days: 30    # Mantém por 30 dias
+
+      # ── Step 13: Publicar resumo no GitHub ───────────────────────────────────
+      # Adiciona um resumo formatado na página de resultado do workflow.
+      # Visível diretamente na aba Actions do GitHub.
+      - name: 📝 Publish coverage summary
+        if: always()
+        run: |
+          # Coleta métricas finais
+          LINES=$(lcov --summary coverage/lcov_filtered.info 2>&1 | grep "lines" | head -1)
+          FUNCTIONS=$(lcov --summary coverage/lcov_filtered.info 2>&1 | grep "functions" | head -1)
+
+          # Escreve no arquivo de resumo do GitHub
+          echo "## 📊 Test Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Métrica | Resultado |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lines | $LINES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Functions | $FUNCTIONS |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Threshold mínimo: **75%**" >> $GITHUB_STEP_SUMMARY
